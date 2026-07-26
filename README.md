@@ -18,7 +18,8 @@ boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
 Then:
 
 ```bash
-nix build .#nixosConfigurations.pi5-bootstrap.config.system.build.sdImage --system aarch64-linux
+# Builds the Pi 5 bootstrap SD image (.img.zst in result/sd-image/)
+nix build .#images.pi5-bootstrap
 zstd -d result/sd-image/*.img.zst -o pi5-bootstrap.img
 sudo dd if=pi5-bootstrap.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
