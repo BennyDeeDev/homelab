@@ -10,15 +10,6 @@
     fsType = "ext4";
   };
 
-  networking.useDHCP = lib.mkDefault true;
-
-  services.avahi = {
-    enable = true;
-    publish.enable = true;
-    publish.workstation = true;
-    nssmdns4 = true;
-  };
-
   services.openssh = {
     enable = true;
     settings = {
