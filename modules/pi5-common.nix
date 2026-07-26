@@ -43,6 +43,10 @@
     "nix-command"
     "flakes"
   ];
+  nix.settings.trusted-users = [ "benjamin" ];
+
+  # TODO: replace with secret management later
+  security.sudo.wheelNeedsPassword = false;
 
   system.stateVersion = "26.05";
 }
