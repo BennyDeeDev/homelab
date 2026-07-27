@@ -19,12 +19,13 @@
     };
   };
 
-  users.users.benjamin = {
+  # Replace with your own username and SSH public key
+  users.users.myuser = {
     isNormalUser = true;
     shell = pkgs.zsh;
     extraGroups = [ "wheel" ];
     openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHW2qr7cup1ALuIpnhUoJP8dLjv/yhGfuh/1Vni2lSbd"
+      "ssh-ed25519 AAAA...your-public-key... you@example.com"
     ];
   };
 
@@ -43,9 +44,11 @@
     "nix-command"
     "flakes"
   ];
-  nix.settings.trusted-users = [ "benjamin" ];
 
-  # TODO: replace with secret management later
+  # Needed for `nixos-rebuild switch --target-host` to accept unsigned closures from your build box
+  nix.settings.trusted-users = [ "myuser" ];
+
+  # TODO: swap for proper secret management
   security.sudo.wheelNeedsPassword = false;
 
   system.stateVersion = "26.05";
