@@ -1,10 +1,10 @@
-{ pkgs, lib, ... }:
+{ pkgs, ... }:
 
 {
-  # pi5-bootstrap gets these from sd-image-aarch64.nix; pi5-server/pi5-kiosk need them
-  # here because they don't import the sd-image module (they're deployed systems, not images).
-  boot.loader.grub.enable = false;
-  boot.loader.generic-extlinux-compatible.enable = true;
+  # Mainline kernel — cached, builds fast. Overrides the nixos-hardware vendor pin.
+  boot.kernelPackages = pkgs.linuxPackages;
+
+  # Not set by the nixos-hardware profile; required for the extlinux boot flow.
   fileSystems."/" = {
     device = "/dev/disk/by-label/NIXOS_SD";
     fsType = "ext4";
@@ -30,25 +30,18 @@
   };
 
   programs.zsh.enable = true;
-
   time.timeZone = "Europe/Berlin";
   i18n.defaultLocale = "en_US.UTF-8";
   console.keyMap = "us";
 
-  environment.systemPackages = with pkgs; [
-    git
-    vim
-  ];
+  environment.systemPackages = with pkgs; [ git vim ];
 
-  nix.settings.experimental-features = [
-    "nix-command"
-    "flakes"
-  ];
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
-  # Needed for `nixos-rebuild switch --target-host` to accept unsigned closures from your build box
+  # Needed for `nixos-rebuild switch --target-host` to accept unsigned closures
   nix.settings.trusted-users = [ "myuser" ];
 
-  # TODO: swap for proper secret management
+  # TODO: swap for proper secret management post-bootstrap
   security.sudo.wheelNeedsPassword = false;
 
   system.stateVersion = "26.05";

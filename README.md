@@ -1,13 +1,12 @@
 # NixOS on Raspberry Pi 5
 
-A template for building a custom NixOS SD image for the Raspberry Pi 5 with SSH keys baked in, then deploying role-specific configurations remotely via `nixos-rebuild`.
+Template for building a custom NixOS SD image for the Raspberry Pi 5, then deploying host configurations remotely via `nixos-rebuild`. Fork it, put your SSH key in `modules/pi5-common.nix`, build the image, flash, SSH in, deploy.
 
 ## What this repo gives you
 
-- `images/pi5-bootstrap` — a minimal SD image with SSH access. Flash once, boot, SSH in. No keyboard or HDMI needed after first flash.
-- `nixosConfigurations.pi5-server` — example role config for a headless server.
-- `nixosConfigurations.pi5-kiosk` — example role config for a display kiosk.
-- `modules/pi5-common.nix` — shared base config (SSH, user, boot loader, filesystem).
+- `images.pi5-bootstrap` — a minimal SD image with SSH access. Flash once, boot, SSH in. No keyboard or HDMI needed after first flash.
+- `nixosConfigurations.pi5-host-1` and `nixosConfigurations.pi5-host-2` — example host configs. Rename and extend.
+- `modules/pi5-common.nix` — shared base config (SSH, user, kernel, filesystem, packages).
 
 ## Prerequisites
 
@@ -33,7 +32,9 @@ zstd -d result/sd-image/*.img.zst -o pi5-bootstrap.img
 sudo dd if=pi5-bootstrap.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
-Uses the mainline Linux kernel (cached on cache.nixos.org) — build finishes in under a minute. No `nixos-hardware` needed for the bootstrap image because the generic unstable aarch64 SD image already supports Pi 5.
+Uses the mainline Linux kernel — cached on `cache.nixos.org`, fast build. No `nixos-hardware` needed for the bootstrap image because the generic unstable aarch64 SD image already ships Pi 5 device trees, a unified U-Boot binary, and the `[pi5] config.txt` section.
+
+Flash to microSD, not a USB SSD or NVMe. U-Boot on the Pi 5 can't read the boot files back from USB or NVMe yet — only the SD card slot works. Reference: [NixOS Wiki — Pi 5 Storage](https://wiki.nixos.org/wiki/NixOS_on_ARM/Raspberry_Pi_5).
 
 ## First boot
 
@@ -41,69 +42,66 @@ Uses the mainline Linux kernel (cached on cache.nixos.org) — build finishes in
 ssh myuser@<pi-ip>
 ```
 
-Find the IP via your router's DHCP lease table. On the first SSH connection you may see a "REMOTE HOST IDENTIFICATION HAS CHANGED" warning — clear it with:
+Find the IP via your router's DHCP lease table. If you reflash and see a `REMOTE HOST IDENTIFICATION HAS CHANGED` warning:
 
 ```bash
 ssh-keygen -R <pi-ip>
 ```
 
-Then retry SSH. Your key is the only way in (password auth is disabled, root login is disabled).
+Your SSH key is the only way in (password auth disabled, root login disabled).
 
-## Deploy role config
+## Deploy a host config
 
 ```bash
-nixos-rebuild switch --flake .#pi5-server --target-host myuser@<pi-ip> --sudo
+nixos-rebuild switch --flake .#pi5-host-1 --target-host myuser@<pi-ip> --sudo
 ```
 
-After the first `nixos-rebuild switch`, the Pi runs your role config. No more image reflashing — all future changes go through `nixos-rebuild switch` over SSH. Reboot once to apply the new hostname.
+After the first `nixos-rebuild switch`, the Pi runs your host config. All future changes go through `nixos-rebuild switch` over SSH. Reboot once to apply the new hostname.
 
-## Pitfalls
+`pi5-common.nix` sets `security.sudo.wheelNeedsPassword = false` for bootstrap convenience. After your Pi is stable, set up agenix or sops-nix for secret management.
 
-### USB SSD boot doesn't work
+## Why mainline kernel, not the nixos-hardware vendor kernel
 
-U-Boot v2026.07 (`rpi_arm64_defconfig`) cannot complete the extlinux boot flow from a USB SSD or NVMe on the Pi 5. The Pi EEPROM finds `u-boot.bin` and loads it, but U-Boot then can't read `extlinux.conf` back from the same device. Boot hangs at the U-Boot splash screen with no text output.
+The deployed hosts import `nixos-hardware.nixosModules.raspberry-pi-5` for board-specific boot setup. But the profile also pins Raspberry Pi's downstream `linux-rpi` kernel, which is **not built by Hydra and not on `cache.nixos.org`** — see [nixos-hardware issue #854](https://github.com/NixOS/nixos-hardware/issues/854). Importing the profile as-is triggers a full kernel build from source: hours under emulation, long even on the Pi itself.
 
-**Fix: boot from microSD.** The SD card slot is the only reliable boot path with the current U-Boot. Flash the image to a microSD card, not a USB SSD.
+To avoid that, `modules/pi5-common.nix` overrides the kernel:
 
-Reference: [NixOS Wiki — NixOS on ARM/Raspberry Pi 5](https://wiki.nixos.org/wiki/NixOS_on_ARM/Raspberry_Pi_5) (Storage section).
-
-### nixos-hardware vendor kernel is not cached
-
-The `nixos-hardware.nixosModules.raspberry-pi-5` profile swaps in the downstream vendor `linux-rpi` kernel (with `bcm2712_defconfig`, RP1 initrd modules, VC4 graphics config). That kernel package lives in the nixos-hardware repo, not in nixpkgs proper, and isn't built by Hydra's official CI. Building it means compiling the full vendor kernel from source — hours under QEMU emulation, ~30+ minutes natively on the Pi.
-
-**For headless setups, skip nixos-hardware.** Mainline Linux 6.18+ boots Pi 5 fine (the generic unstable aarch64 SD image includes Pi 5 device trees and a unified U-Boot binary). Add `nixos-hardware` back only if you need RP1 GPIO edge cases, hardware-accelerated VC4 KMS (kiosk on HDMI), or vendor NVMe timing quirks.
-
-### trusted-users needed for remote nixos-rebuild
-
-`nixos-rebuild switch --target-host` uses `nix-copy-closure` to push the built closure from your build box to the Pi over SSH. The Pi's nix-daemon refuses unsigned store paths unless the pushing user is in `trusted-users`. Without it:
-
-```
-error: cannot add path '...' because it lacks a signature by a trusted key
+```nix
+boot.kernelPackages = pkgs.linuxPackages;
 ```
 
-**Fix:** set `nix.settings.trusted-users = [ "myuser" ]` in the config (already in `pi5-common.nix`). This trusts store pushes from the SSH-authenticated user.
+### What you get from nixos-hardware
 
-### DHCP is the upstream default
+- Pi 5 boot setup (no GRUB; extlinux-based generations and rollback)
+- BCM2712 device-tree filtering (only Pi 5 device trees land in your system)
+- Pi 5 initrd drivers (NVMe, PCIe, RP1 — so your boot drive comes up)
+- The right driver module names for whichever kernel you pick — the profile adapts automatically
 
-`networking.useDHCP` defaults to `true` in nixpkgs. Don't set it explicitly unless you're overriding to `false` for a static IP config.
+### What you don't get
 
-### Why split bootstrap from role configs
+- The Raspberry Pi downstream `linux-rpi` kernel and its vendor-specific patches
+- Automatic FAT partition refresh on `nixos-rebuild switch` (opt-in only — see below)
 
-The bootstrap image is a one-time throwaway — flash once, SSH in, never reflash. Role configs are deployed remotely via `nixos-rebuild switch` forever after. Splitting them reflects the different deployment mechanisms: `images` output for flashing, `nixosConfigurations` for deploying.
+### Practical consequences
 
-### Why pi5-common.nix sets boot loader and root filesystem
+- Mainline boots Pi 5 fine for headless use: network, USB, NVMe root, framebuffer.
+- You may lose vendor-validated edge cases: RP1 GPIO quirks, VC4 KMS graphics paths, HAT overlays, vendor NVMe timing.
+- To switch to the vendor kernel, comment out the override in `modules/pi5-common.nix`. Expect a long uncached build the first time.
 
-`pi5-bootstrap.nix` imports `sd-image-aarch64.nix` which already sets `boot.loader.grub.enable = false`, `boot.loader.generic-extlinux-compatible.enable = true`, and `fileSystems."/"` (label `NIXOS_SD`, ext4) because building a bootable SD image requires them. `pi5-server.nix` and `pi5-kiosk.nix` don't import that module — they're deployed systems, not images — so without these set explicitly they'd fail `nix flake check` on grub/filesystems assertions.
+### Firmware partition refresh
 
-The three settings are:
-- `boot.loader.grub.enable = false` — GRUB is an x86 EFI bootloader; the Pi's boot chain (VideoCore → U-Boot → extlinux) has no use for it. NixOS defaults `grub.enable = true`, so it must be explicitly disabled.
-- `boot.loader.generic-extlinux-compatible.enable = true` — generates `extlinux.conf` during `nixos-rebuild switch` so U-Boot can read the new kernel + initrd on next boot. Without it, rebuilds don't propagate across reboots.
-- `fileSystems."/"` (label `NIXOS_SD`, ext4) — tells NixOS where root lives for mount ordering at activation. Label-based lookup works regardless of boot medium (SD card `mmcblk0`, USB `sda`, etc.).
+The bootstrap image's FAT partition (U-Boot, GPU firmware, `config.txt`, device trees) is written once at image build time. `nixos-rebuild switch` does **not** refresh it — only the ext4 partition (kernel, initrd, `extlinux.conf`) updates on each rebuild. For a headless mainline box this is invisible. If a future nixpkgs bumps U-Boot or you need declarative `config.txt`, either reflash the bootstrap or enable the nixos-hardware firmware module. Mount `/boot/firmware` and add:
 
-### Why no nixos-hardware
+```nix
+fileSystems."/boot/firmware" = {
+  device = "/dev/disk/by-label/FIRMWARE";
+  fsType = "vfat";
+};
 
-The nixos-hardware `raspberry-pi-5` profile swaps in the downstream vendor `linux-rpi` kernel. That kernel isn't cached on cache.nixos.org or any Hydra jobset — building it requires compiling the full vendor kernel from source. For a headless bootstrap image and headless server, the mainline kernel already boots Pi 5 fine. Dead weight at the cost of hours of compile time. Add nixos-hardware back only for graphics/RP1 edge cases.
+hardware.raspberry-pi.firmware = {
+  enable = true;
+  uboot.enable = true;
+};
+```
 
-## Removing passwordless sudo (post-bootstrap)
-
-`pi5-common.nix` has `security.sudo.wheelNeedsPassword = false` for bootstrap convenience. After your Pi is stable, set up agenix or sops-nix for secret management.
+This works with either kernel. The activation script prunes stale `*.dtb` files and overlays it didn't copy, so don't keep manual changes on the FAT partition.

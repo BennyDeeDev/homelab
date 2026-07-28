@@ -6,5 +6,5 @@
     "${modulesPath}/installer/sd-card/sd-image-aarch64.nix"
   ];
 
-  networking.hostName = "pi5";
+  networking.hostName = "pi5-bootstrap";
 }

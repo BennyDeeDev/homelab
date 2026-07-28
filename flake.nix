@@ -1,24 +1,31 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixos-hardware = {
+      url = "github:NixOS/nixos-hardware/master";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, ... }: {
-    # Systems you deploy via `nixos-rebuild switch --flake .#<name>`
-    nixosConfigurations = {
-      # Example role configs — rename/extend for your own hosts
-      pi5-server = nixpkgs.lib.nixosSystem {
-        system = "aarch64-linux";
-        modules = [ ./hosts/pi5-server.nix ];
-      };
-
-      pi5-kiosk = nixpkgs.lib.nixosSystem {
-        system = "aarch64-linux";
-        modules = [ ./hosts/pi5-kiosk.nix ];
-      };
+  outputs = { self, nixpkgs, nixos-hardware, ... }: {
+    # Example deployed hosts — fork, rename, extend
+    nixosConfigurations.pi5-host-1 = nixpkgs.lib.nixosSystem {
+      system = "aarch64-linux";
+      modules = [
+        nixos-hardware.nixosModules.raspberry-pi-5
+        ./hosts/pi5-host-1.nix
+      ];
     };
 
-    # Images you `nix build` and flash — not deployed via nixos-rebuild
+    nixosConfigurations.pi5-host-2 = nixpkgs.lib.nixosSystem {
+      system = "aarch64-linux";
+      modules = [
+        nixos-hardware.nixosModules.raspberry-pi-5
+        ./hosts/pi5-host-2.nix
+      ];
+    };
+
+    # One-time flashable bootstrap image with SSH access — no nixos-hardware, fast mainline build
     images.pi5-bootstrap =
       (nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
